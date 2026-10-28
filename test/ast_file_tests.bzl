@@ -14,7 +14,22 @@
 
 """Tests for `ast_file`."""
 
+load(
+    "//test/rules:action_command_line_test.bzl",
+    "action_command_line_test",
+    "make_action_command_line_test_rule",
+)
 load("//test/rules:provider_test.bzl", "provider_test")
+
+dump_ast_swiftcopt_test = make_action_command_line_test_rule(
+    config_settings = {
+        str(Label("//swift:copt")): [
+            "-warnings-as-errors",
+            "-Wwarning",
+            "DeprecatedDeclaration",
+        ],
+    },
+)
 
 def ast_file_test_suite(name, tags = []):
     """Test suite for `swift_library` dumping ast files.
@@ -79,6 +94,51 @@ def ast_file_test_suite(name, tags = []):
         provider = "OutputGroupInfo",
         tags = all_tags,
         target_under_test = "//test/fixtures/multiple_files",
+    )
+
+    # The dump action always passes `-suppress-warnings`, which the driver
+    # rejects alongside `-warnings-as-errors`
+    action_command_line_test(
+        name = "{}_drops_conflicting_warning_flags".format(name),
+        expected_argv = [
+            "-suppress-warnings",
+            "-Xcc -Werror",
+        ],
+        not_expected_argv = [
+            "-warnings-as-errors",
+            "-Wwarning DeprecatedDeclaration",
+            "-Werror UnusedResult",
+        ],
+        mnemonic = "SwiftDumpAST",
+        tags = all_tags,
+        target_under_test = "//test/fixtures/warnings_as_errors:dump_ast_conflicting_flags",
+    )
+
+    dump_ast_swiftcopt_test(
+        name = "{}_drops_conflicting_warning_swiftcopts".format(name),
+        expected_argv = ["-suppress-warnings"],
+        not_expected_argv = [
+            "-warnings-as-errors",
+            "-Wwarning DeprecatedDeclaration",
+        ],
+        mnemonic = "SwiftDumpAST",
+        tags = all_tags,
+        target_under_test = "//test/fixtures/multiple_files",
+    )
+
+    # The compile action must receive the flag even when filtered from ast action
+    action_command_line_test(
+        name = "{}_compile_keeps_warning_flags".format(name),
+        expected_argv = [
+            "-warnings-as-errors",
+            "-Wwarning DeprecatedDeclaration",
+            "-Werror UnusedResult",
+            "-Xcc -Werror",
+        ],
+        not_expected_argv = ["-suppress-warnings"],
+        mnemonic = "SwiftCompile",
+        tags = all_tags,
+        target_under_test = "//test/fixtures/warnings_as_errors:dump_ast_conflicting_flags",
     )
 
     native.test_suite(

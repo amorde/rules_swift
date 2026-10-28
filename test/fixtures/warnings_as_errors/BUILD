@@ -68,3 +68,19 @@ swift_library(
     ],
     tags = FIXTURE_TAGS,
 )
+
+swift_library(
+    name = "dump_ast_conflicting_flags",
+    srcs = ["Empty.swift"],
+    copts = [
+        "-warnings-as-errors",
+        "-Wwarning",
+        "DeprecatedDeclaration",
+        "-Werror",
+        "UnusedResult",
+        "-Xcc",
+        "-Werror",
+    ],
+    features = ["swift.treat_warnings_as_errors"],
+    tags = FIXTURE_TAGS,
+)

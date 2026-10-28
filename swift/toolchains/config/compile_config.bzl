@@ -115,6 +115,25 @@ _WMO_FLAGS = {
     "-wmo": True,
 }
 
+# Swift command line flags that the driver rejects when combined with
+# `-suppress-warnings`, mapped to whether the flag takes a separate argument.
+_SUPPRESS_WARNINGS_CONFLICTING_FLAGS = {
+    "-Werror": True,
+    "-Wwarning": True,
+    "-warnings-as-errors": False,
+}
+
+# Swift command line flags whose next argument is passed through to another
+# tool, and so must not be interpreted as a Swift flag. (This dictionary is
+# used as a set for quick lookup; the values are irrelevant.)
+_PASSTHROUGH_FLAGS = {
+    "-Xcc": True,
+    "-Xclang-linker": True,
+    "-Xfrontend": True,
+    "-Xlinker": True,
+    "-Xllvm": True,
+}
+
 def compile_action_configs(
         *,
         additional_objc_copts = [],
@@ -485,9 +504,7 @@ def compile_action_configs(
 
         # Enable warnings-as-errors if requested.
         ActionConfigInfo(
-            actions = all_compile_action_names() + [
-                SWIFT_ACTION_DUMP_AST,
-            ],
+            actions = all_compile_action_names(),
             configurators = [
                 add_arg("-warnings-as-errors"),
             ],
@@ -1478,9 +1495,14 @@ def compile_action_configs(
         ActionConfigInfo(
             actions = all_compile_action_names() + [
                 SWIFT_ACTION_COMPILE_MODULE_INTERFACE,
-                SWIFT_ACTION_DUMP_AST,
             ],
             configurators = [_user_compile_flags_configurator],
+        ),
+    )
+    action_configs.append(
+        ActionConfigInfo(
+            actions = [SWIFT_ACTION_DUMP_AST],
+            configurators = [_dump_ast_user_compile_flags_configurator],
         ),
     )
     action_configs.append(
@@ -1511,12 +1533,22 @@ def compile_action_configs(
         action_configs.append(
             ActionConfigInfo(
                 actions = all_compile_action_names() + [
-                    SWIFT_ACTION_DUMP_AST,
                     SWIFT_ACTION_PRECOMPILE_C_MODULE,
                 ],
                 configurators = [
                     lambda _, args: args.add_all(
                         additional_swiftc_copts,
+                        map_each = _fail_if_flag_is_banned,
+                    ),
+                ],
+            ),
+        )
+        action_configs.append(
+            ActionConfigInfo(
+                actions = [SWIFT_ACTION_DUMP_AST],
+                configurators = [
+                    lambda _, args: args.add_all(
+                        _drop_warning_control_flags(additional_swiftc_copts),
                         map_each = _fail_if_flag_is_banned,
                     ),
                 ],
@@ -2506,6 +2538,47 @@ def _user_compile_flags_configurator(prerequisites, args):
         prerequisites.user_compile_flags,
         map_each = _fail_if_flag_is_banned,
     )
+
+def _dump_ast_user_compile_flags_configurator(prerequisites, args):
+    """Adds user compile flags to the `-dump-ast` command line.
+
+    The dump action always passes `-suppress-warnings`, which the driver
+    rejects alongside flags that promote or demote warnings, so those flags are
+    dropped.
+    """
+    args.add_all(
+        _drop_warning_control_flags(prerequisites.user_compile_flags),
+        map_each = _fail_if_flag_is_banned,
+    )
+
+def _drop_warning_control_flags(flags):
+    """Returns `flags` without the flags that conflict with `-suppress-warnings`.
+
+    Args:
+        flags: A list of compiler flags.
+
+    Returns:
+        The list of flags, minus any `-warnings-as-errors`, `-Werror <group>`,
+        or `-Wwarning <group>`. Arguments of passthrough flags like `-Xcc` are
+        kept as-is.
+    """
+    result = []
+    keep_next = False
+    drop_next = False
+    for flag in flags:
+        if keep_next:
+            result.append(flag)
+            keep_next = False
+        elif drop_next:
+            drop_next = False
+        elif flag in _PASSTHROUGH_FLAGS:
+            result.append(flag)
+            keep_next = True
+        elif flag in _SUPPRESS_WARNINGS_CONFLICTING_FLAGS:
+            drop_next = _SUPPRESS_WARNINGS_CONFLICTING_FLAGS[flag]
+        else:
+            result.append(flag)
+    return result
 
 def _precompile_user_compile_flags_configurator(prerequisites, args):
     """Forwards the underlying clang library's copts to the precompile action.
